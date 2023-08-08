@@ -30,7 +30,7 @@ class TCPSender {
     //! outbound queue of segments that the TCPSender wants sent
     std::queue<TCPSegment> _segments_out{};
 
-    std::queue<OutstandingData> _outstanding{};
+    std::deque<OutstandingData> _outstanding{};
 
     //! retransmission timer for the connection
     unsigned int _initial_retransmission_timeout;

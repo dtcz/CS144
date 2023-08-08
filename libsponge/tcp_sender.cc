@@ -10,9 +10,6 @@
 // For Lab 3, please replace with a real implementation that passes the
 // automated checks run by `make check_lab3`.
 
-template <typename... Targs>
-void DUMMY_CODE(Targs &&... /* unused */) {}
-
 using namespace std;
 
 //! \param[in] capacity the capacity of the outgoing byte stream
@@ -33,7 +30,7 @@ void TCPSender::fill_window() {
         _segments_out.emplace(seg);
         _bytes_in_flight += seg.length_in_sequence_space();
         _next_seqno = _next_seqno + seg.length_in_sequence_space();
-        _outstanding.push(OutstandingData{
+        _outstanding.push_back(OutstandingData{
             seg.payload().copy(), _initial_retransmission_timeout, seg.header().seqno, seg.length_in_sequence_space()});
     } else if (_latest_window_size >= _bytes_in_flight) {
         bool isWillFin = _stream.input_ended() && _fin_seqno == 0;
@@ -53,10 +50,10 @@ void TCPSender::fill_window() {
                 seg.header().fin = true;
                 _fin_seqno = _next_seqno;
             }
-            _outstanding.push(OutstandingData{seg.payload().copy(),
-                                              _initial_retransmission_timeout,
-                                              seg.header().seqno,
-                                              seg.length_in_sequence_space()});
+            _outstanding.push_back(OutstandingData{seg.payload().copy(),
+                                                   _initial_retransmission_timeout,
+                                                   seg.header().seqno,
+                                                   seg.length_in_sequence_space()});
             _segments_out.emplace(seg);
             _bytes_in_flight += seg.length_in_sequence_space();
             _next_seqno = _next_seqno + seg.length_in_sequence_space();
@@ -73,13 +70,20 @@ void TCPSender::ack_received(const WrappingInt32 ackno, const uint16_t window_si
     if (unwrap(ackno, _isn, 0) == _next_seqno) {
         _bytes_in_flight = 0;
         while (_outstanding.size()) {
-            _outstanding.pop();
+            _outstanding.pop_front();
         }
     } else if (_outstanding.size()) {
-        auto &tmp = _outstanding.front();
-        if (tmp.seqno + tmp.len == ackno) {
-            _bytes_in_flight -= tmp.len;
-            _outstanding.pop();
+        int i = 1;
+        int j = 0;
+        for (auto &tmp : _outstanding) {
+            if (tmp.seqno + tmp.len == ackno) {
+                j = i;
+            }
+            i++;
+        }
+        while (j--) {
+            _bytes_in_flight -= _outstanding.front().len;
+            _outstanding.pop_front();
         }
     }
     _latest_window_size = window_size;
@@ -100,7 +104,7 @@ void TCPSender::tick(const size_t ms_since_last_tick) {
                 seg.header().fin = true;
             }
             seg.payload() = static_cast<string>(tmp.data);
-            _segments_out.emplace(seg);
+            _segments_out.push(seg);
             tmp.retx += 1;
             if (_latest_window_size == 0 && _bytes_in_flight == 1) {
                 tmp.tick = _initial_retransmission_timeout;
@@ -118,4 +122,8 @@ unsigned int TCPSender::consecutive_retransmissions() const {
     return 0;
 }
 
-void TCPSender::send_empty_segment() {}
+void TCPSender::send_empty_segment() {
+    TCPSegment s;
+    s.header().ack = true;
+    _segments_out.push(s);
+}
