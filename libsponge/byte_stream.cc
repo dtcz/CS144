@@ -8,9 +8,6 @@
 
 // You will need to add private members to the class declaration in `byte_stream.hh`
 
-template <typename... Targs>
-void DUMMY_CODE(Targs &&... /* unused */) {}
-
 using namespace std;
 
 ByteStream::ByteStream(const size_t capacity)
@@ -18,24 +15,22 @@ ByteStream::ByteStream(const size_t capacity)
 
 size_t ByteStream::write(const string &data) {
     size_t len = min(data.length(), remaining_capacity());
-    for (size_t i = 0; i < len; i++) {
-        _bytes.push_back(data[i]);
-    }
     _writtenBytes += len;
+    _bytes.append(BufferList(move(string().assign(data.begin(), data.begin() + len))));
     return len;
 }
 
 //! \param[in] len bytes will be copied from the output side of the buffer
 string ByteStream::peek_output(const size_t len) const {
-    return string(_bytes.begin(), _bytes.begin() + min(len, buffer_size()));
+    string s = _bytes.concatenate();
+    return string().assign(s.begin(), s.begin() + min(len, buffer_size()));
 }
 
 //! \param[in] len bytes will be removed from the output side of the buffer
 void ByteStream::pop_output(const size_t len) {
-    for (size_t i = 0; i < min(len, buffer_size()); i++) {
-        _bytes.pop_front();
-    }
-    _readBytes += len;
+    size_t l = min(len, buffer_size());
+    _readBytes += l;
+    _bytes.remove_prefix(l);
 }
 
 //! Read (i.e., copy and then pop) the next "len" bytes of the stream

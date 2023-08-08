@@ -7,9 +7,6 @@
 
 // You will need to add private members to the class declaration in `stream_reassembler.hh`
 
-template <typename... Targs>
-void DUMMY_CODE(Targs &&... /* unused */) {}
-
 using namespace std;
 
 StreamReassembler::StreamReassembler(const size_t capacity)
@@ -36,16 +33,23 @@ void StreamReassembler::push_substring(const string &data, const size_t index, c
     if (eof) {
         _data[j] = "EOF";
     }
+    string s = "";
     while (!_data.empty() && _data.front() != "") {
         if (_data.front() == "EOF") {
+            if (s.size()) {
+                _readed += _output.write(s);
+            }
             _output.end_input();
             break;
         }
-        if (_output.remaining_capacity() == 0) {
+        if (_output.remaining_capacity() - s.size() == 0) {
             break;
         }
-        _readed += _output.write(_data.front());
+        s += _data.front();
         _data.pop_front();
+    }
+    if (s.size() && _data.front() != "EOF") {
+        _readed += _output.write(s);
     }
     _data.resize(_capacity + 1);
 }

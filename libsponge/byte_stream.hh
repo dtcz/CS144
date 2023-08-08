@@ -1,7 +1,8 @@
 #ifndef SPONGE_LIBSPONGE_BYTE_STREAM_HH
 #define SPONGE_LIBSPONGE_BYTE_STREAM_HH
 
-#include <deque>
+#include "util/buffer.hh"
+
 #include <string>
 //! \brief An in-order byte stream.
 
@@ -12,7 +13,7 @@ class ByteStream {
   private:
     // Your code here -- add private members as necessary.
     size_t _capacity;
-    std::deque<char> _bytes;
+    BufferList _bytes{};
     size_t _writtenBytes;
     size_t _readBytes;
     bool _input_ended;
