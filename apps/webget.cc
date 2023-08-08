@@ -1,4 +1,4 @@
-#include "socket.hh"
+#include "tcp_sponge_socket.hh"
 #include "util.hh"
 
 #include <cstdlib>
@@ -9,7 +9,7 @@ using namespace std;
 void get_URL(const string &host, const string &path) {
     // Your code here.
     // const uint16_t portnum = ((std::random_device()()) % 50000) + 1025;
-    TCPSocket socket;
+    CS144TCPSocket socket;
     // socket1.bind(Address("127.0.0.1", portnum));
     // socket1.listen(1);
 
@@ -23,7 +23,7 @@ void get_URL(const string &host, const string &path) {
         cout << res;
     }
     socket.close();
-    // socket.wait_until_closed();
+    socket.wait_until_closed();
     // You will need to connect to the "http" service on
     // the computer whose name is in the "host" string,
     // then request the URL path given in the "path" string.

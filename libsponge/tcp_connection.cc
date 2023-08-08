@@ -17,7 +17,7 @@ size_t TCPConnection::unassembled_bytes() const { return _receiver.unassembled_b
 
 size_t TCPConnection::time_since_last_segment_received() const { return _time_since_last_segment_received; }
 
-TCPSegment sendAck(TCPReceiver &_receiver, TCPSender &_sender) {
+void TCPConnection::send_ack() {
     TCPSegment ack;
     ack.header().seqno = _sender.next_seqno();
     if (_receiver.ackno().has_value()) {
@@ -25,7 +25,22 @@ TCPSegment sendAck(TCPReceiver &_receiver, TCPSender &_sender) {
         ack.header().ack = true;
     }
     ack.header().win = _receiver.window_size();
-    return ack;
+    _segments_out.push(ack);
+}
+
+void TCPConnection::fill_window(std::function<bool(TCPSegment &seg, TCPConnection &c)> ack) {
+    _sender.fill_window();
+    auto &q = _sender.segments_out();
+    while (not q.empty()) {
+        TCPSegment &seg = q.front();
+        if (_receiver.ackno().has_value() && (ack == nullptr || ack(seg, *this))) {
+            seg.header().ack = true;
+            seg.header().ackno = _receiver.ackno().value();
+        }
+        seg.header().win = _receiver.window_size();
+        _segments_out.push(seg);
+        q.pop();
+    }
 }
 
 void TCPConnection::segment_received(const TCPSegment &seg) {
@@ -43,22 +58,19 @@ void TCPConnection::segment_received(const TCPSegment &seg) {
     if (curr == TCPState{TCPState::State::LISTEN} && header.syn) {
         _receiver.segment_received(seg);
         connect();
-        if (seg.payload().size()) {
-            _segments_out.push(sendAck(_receiver, _sender));
-        }
     } else if (curr == TCPState{TCPState::State::SYN_SENT} && header.syn) {
         _receiver.segment_received(seg);
         if (header.ack) {
             _sender.ack_received(header.ackno, header.win);
         }
         if (seg.length_in_sequence_space() > 0) {
-            _segments_out.push(sendAck(_receiver, _sender));
+            send_ack();
         }
     } else if (curr == TCPState{TCPState::State::SYN_RCVD}) {
         _receiver.segment_received(seg);
         _sender.ack_received(header.ackno, header.win);
         if (seg.payload().size()) {
-            _segments_out.push(sendAck(_receiver, _sender));
+            send_ack();
         }
     } else if (curr == TCPState{TCPState::State::ESTABLISHED}) {
         if (header.fin) {
@@ -69,23 +81,16 @@ void TCPConnection::segment_received(const TCPSegment &seg) {
         }
         if (seg.length_in_sequence_space() > 0) {
             _receiver.segment_received(seg);
-            _segments_out.push(sendAck(_receiver, _sender));
+            send_ack();
         }
     } else if (curr == TCPState{TCPState::State::LAST_ACK}) {
         _receiver.segment_received(seg);
         _sender.ack_received(header.ackno, header.win);
         if (seg.length_in_sequence_space()) {
-            _segments_out.push(sendAck(_receiver, _sender));
+            send_ack();
         }
         if (state() != TCPState{TCPState::State::LAST_ACK}) {
             _active = false;
-        }
-    } else if (curr == TCPState{TCPState::State::FIN_WAIT_1} || curr == TCPState{TCPState::State::CLOSING} ||
-               curr == TCPState{TCPState::State::FIN_WAIT_2}) {
-        _receiver.segment_received(seg);
-        _sender.ack_received(header.ackno, header.win);
-        if (seg.length_in_sequence_space()) {
-            _segments_out.push(sendAck(_receiver, _sender));
         }
     } else if (curr == TCPState{TCPState::State::TIME_WAIT} || curr == TCPState{TCPState::State::CLOSE_WAIT}) {
         if (header.ack) {
@@ -95,7 +100,7 @@ void TCPConnection::segment_received(const TCPSegment &seg) {
             if (seg.payload().size()) {
                 _receiver.segment_received(seg);
             }
-            _segments_out.push(sendAck(_receiver, _sender));
+            send_ack();
         }
     } else {
         if (header.ack) {
@@ -103,7 +108,7 @@ void TCPConnection::segment_received(const TCPSegment &seg) {
         }
         if (seg.length_in_sequence_space() > 0) {
             _receiver.segment_received(seg);
-            _segments_out.push(sendAck(_receiver, _sender));
+            send_ack();
         }
     }
     if (state() == TCPState(TCPState::State::TIME_WAIT)) {
@@ -111,17 +116,7 @@ void TCPConnection::segment_received(const TCPSegment &seg) {
     }
     _time_since_last_segment_received = 0;
     if (state() != TCPState{TCPState::State::LISTEN}) {
-        _sender.fill_window();
-        while (not _sender.segments_out().empty()) {
-            TCPSegment data = _sender.segments_out().front();
-            data.header().win = _receiver.window_size();
-            if (_receiver.ackno().has_value()) {
-                data.header().ack = true;
-                data.header().ackno = _receiver.ackno().value();
-            }
-            _segments_out.push(data);
-            _sender.segments_out().pop();
-        }
+        fill_window();
     }
     if (_receiver.ackno().has_value() and (seg.length_in_sequence_space() == 0) and
         header.seqno == _receiver.ackno().value() - 1) {
@@ -138,17 +133,7 @@ size_t TCPConnection::write(const string &data) {
     int times = 0;
     while (times * _cfg.send_capacity < len) {
         _sender.stream_in().write(data.substr(times * _cfg.send_capacity, _cfg.send_capacity));
-        _sender.fill_window();
-        while (not _sender.segments_out().empty()) {
-            TCPSegment seg = _sender.segments_out().front();
-            seg.header().win = _receiver.window_size();
-            if (_receiver.ackno().has_value()) {
-                seg.header().ack = true;
-                seg.header().ackno = _receiver.ackno().value();
-            }
-            _segments_out.push(seg);
-            _sender.segments_out().pop();
-        }
+        fill_window();
         times++;
     }
     return len;
@@ -156,8 +141,6 @@ size_t TCPConnection::write(const string &data) {
 
 //! \param[in] ms_since_last_tick number of milliseconds since the last call to this method
 void TCPConnection::tick(const size_t ms_since_last_tick) {
-    // printf("%s\n", state().name().c_str());
-    // printf("%s\n", TCPState{TCPState::State::TIME_WAIT}.name().c_str());
     _time_since_last_segment_received += ms_since_last_tick;
     if (state() == TCPState(TCPState::State::TIME_WAIT)) {
         if (_rt_timeout <= ms_since_last_tick) {
@@ -168,8 +151,6 @@ void TCPConnection::tick(const size_t ms_since_last_tick) {
         }
     } else {
         _sender.tick(ms_since_last_tick);
-        // _sender.fill_window();
-        // printf("%ld", _sender.segments_out().size());
         if (_sender.consecutive_retransmissions() > _cfg.MAX_RETX_ATTEMPTS) {
             _sender.stream_in().set_error();
             _receiver.stream_out().set_error();
@@ -196,31 +177,13 @@ void TCPConnection::tick(const size_t ms_since_last_tick) {
 
 void TCPConnection::end_input_stream() {
     _sender.stream_in().end_input();
-    _sender.fill_window();
-    while (not _sender.segments_out().empty()) {
-        TCPSegment seg = _sender.segments_out().front();
-        if (seg.header().fin && _receiver.ackno().has_value()) {
-            seg.header().ack = true;
-            seg.header().ackno = _receiver.ackno().value();
-        }
-        seg.header().win = _receiver.window_size();
-        _segments_out.push(seg);
-        _sender.segments_out().pop();
-    }
+    fill_window([](TCPSegment &seg, TCPConnection &c) -> bool { return seg.header().fin && (true || c.active()); });
 }
 
 void TCPConnection::connect() {
-    _sender.fill_window();
-    while (not _sender.segments_out().empty()) {
-        TCPSegment seg = _sender.segments_out().front();
-        if (seg.header().syn && state() == TCPState{TCPState::State::SYN_RCVD} && _receiver.ackno().has_value()) {
-            seg.header().ack = true;
-            seg.header().ackno = _receiver.ackno().value();
-        }
-        seg.header().win = _receiver.window_size();
-        _segments_out.push(seg);
-        _sender.segments_out().pop();
-    }
+    fill_window([](TCPSegment &seg, TCPConnection &c) -> bool {
+        return seg.header().syn && c.state() == TCPState{TCPState::State::SYN_RCVD};
+    });
 }
 
 TCPConnection::~TCPConnection() {

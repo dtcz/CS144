@@ -24,6 +24,10 @@ class TCPConnection {
     size_t _time_since_last_segment_received{0};
     size_t _rt_timeout;
 
+    //! \brief create and send segments to fill as much of the window as possible
+    void fill_window(std::function<bool(TCPSegment &, TCPConnection &)> ack = nullptr);
+    void send_ack();
+
   public:
     //! \name "Input" interface for the writer
     //!@{
