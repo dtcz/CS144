@@ -16,7 +16,7 @@ using namespace std;
 // You will need to add private members to the class declaration in `router.hh`
 
 template <typename... Targs>
-void DUMMY_CODE(Targs &&... /* unused */) {}
+void DUMMY_CODE(Targs &&.../* unused */) {}
 
 //! \param[in] route_prefix The "up-to-32-bit" IPv4 address prefix to match the datagram's destination address against
 //! \param[in] prefix_length For this route to be applicable, how many high-order (most-significant) bits of the route_prefix will need to match the corresponding bits of the datagram's destination address?
@@ -28,15 +28,30 @@ void Router::add_route(const uint32_t route_prefix,
                        const size_t interface_num) {
     cerr << "DEBUG: adding route " << Address::from_ipv4_numeric(route_prefix).ip() << "/" << int(prefix_length)
          << " => " << (next_hop.has_value() ? next_hop->ip() : "(direct)") << " on interface " << interface_num << "\n";
-
-    DUMMY_CODE(route_prefix, prefix_length, next_hop, interface_num);
-    // Your code here.
+    _routers.push_back(RouterItem{route_prefix, prefix_length, next_hop, interface_num});
 }
 
 //! \param[in] dgram The datagram to be routed
 void Router::route_one_datagram(InternetDatagram &dgram) {
-    DUMMY_CODE(dgram);
-    // Your code here.
+    long j = -1;
+    uint32_t dst_ip = dgram.header().dst;
+    for (size_t i = 0; i < _routers.size(); i++) {
+        RouterItem &item = _routers[i];
+        uint32_t offset = item.prefix_length == 0 ? 0 : 0xffffffff << (32 - item.prefix_length);
+        if ((dst_ip & offset) == (item.route_prefix & offset) &&
+            (j == -1 || _routers[j].prefix_length < item.prefix_length)) {
+            j = i;
+        }
+    }
+    if (j == -1 || dgram.header().ttl-- <= 1) {
+        return;
+    }
+    RouterItem &item = _routers[j];
+    if (item.next_hop.has_value()) {
+        _interfaces[item.interface_num].send_datagram(dgram, item.next_hop.value());
+    } else {
+        _interfaces[item.interface_num].send_datagram(dgram, Address::from_ipv4_numeric(dgram.header().dst));
+    }
 }
 
 void Router::route() {
